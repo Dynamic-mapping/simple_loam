@@ -92,6 +92,7 @@ pcl::PointCloud<PointType>::Ptr laserCloudCornerLast(new pcl::PointCloud<PointTy
 pcl::PointCloud<PointType>::Ptr laserCloudSurfLast(new pcl::PointCloud<PointType>());
 pcl::PointCloud<PointType>::Ptr laserCloudOri(new pcl::PointCloud<PointType>());
 pcl::PointCloud<PointType>::Ptr coeffSel(new pcl::PointCloud<PointType>());
+pcl::PointCloud<PointType>::Ptr targetPoint(new pcl::PointCloud<PointType>());
 pcl::PointCloud<PointType>::Ptr laserCloudFullRes(new pcl::PointCloud<PointType>());
 pcl::PointCloud<pcl::PointXYZ>::Ptr imuTrans(new pcl::PointCloud<pcl::PointXYZ>());
 pcl::KdTreeFLANN<PointType>::Ptr kdtreeCornerLast(new pcl::KdTreeFLANN<PointType>());
@@ -116,6 +117,172 @@ float imuRollStart = 0, imuPitchStart = 0, imuYawStart = 0;
 float imuRollLast = 0, imuPitchLast = 0, imuYawLast = 0;
 float imuShiftFromStartX = 0, imuShiftFromStartY = 0, imuShiftFromStartZ = 0;
 float imuVeloFromStartX = 0, imuVeloFromStartY = 0, imuVeloFromStartZ = 0;
+
+typedef PointType PointT;
+
+class PointToPlaneCostFunction
+        : public ceres::SizedCostFunction<1 /* number of residuals */,
+                                          6 /* size of first parameter */>
+{
+public:
+    const Eigen::Vector3d& p_src;
+    const Eigen::Vector3d& p_nor;
+    const double& p_res;
+    PointToPlaneCostFunction(const Eigen::Vector3d &src, const Eigen::Vector3d &nor, const double &res) :
+            p_src(src), p_nor(nor), p_res(res)
+    {}
+    virtual ~PointToPlaneCostFunction() {}
+    virtual bool Evaluate(double const* const* parameters,
+                          double* residuals,
+                          double** jacobians) const {
+        double p[3] = {p_src[0], p_src[1], p_src[2]};
+        double camera[6] = {parameters[0][0], parameters[0][1], parameters[0][2], parameters[0][3], parameters[0][4], parameters[0][5]};
+        ceres::AngleAxisRotatePoint(camera, p, p);
+
+        // camera[3,4,5] are the translation.
+//        p[0] += camera[3];
+//        p[1] += camera[4];
+//        p[2] += camera[5];
+
+        // The error is the difference between the predicted and observed position.
+        residuals[0] = p_res;
+
+        Eigen::MatrixXd jaconb = Eigen::MatrixXd::Zero(3, 9);
+        Eigen::MatrixXd transb = Eigen::MatrixXd::Zero(3, 3);
+
+        // theta x
+        float srx = sin(camera[0]);
+        float crx = cos(camera[0]);
+        // theta y
+        float sry = sin(camera[1]);
+        float cry = cos(camera[1]);
+        // theta z
+        float srz = sin(camera[2]);
+        float crz = cos(camera[2]);
+
+        // derivative for theta x
+        jaconb(0, 0) = 0; jaconb(0, 1) = crz*crx*sry + srx*srz; jaconb(0, 2) = -crz*srx*sry + crx*srz;
+        jaconb(0, 3) = 0; jaconb(0, 4) = srz*crx*sry - srx*crz; jaconb(0, 5) = -srz*srx*sry - crx*crz;
+        jaconb(0, 6) = 0; jaconb(0, 7) = crx*cry;               jaconb(0, 8) = -srx*cry;
+
+        // derivative for theta y
+        jaconb(1, 0) = -sry*crz; jaconb(1, 1) =  crz*srx*cry;   jaconb(1, 2) =  crz*crx*cry;
+        jaconb(1, 3) = -sry*srz; jaconb(1, 4) =  srz*srx*cry;   jaconb(1, 5) =  srz*crx*cry;
+        jaconb(1, 6) = -cry;     jaconb(1, 7) = -srx*sry;       jaconb(1, 8) = -crx*sry;
+
+        // derivative for theta z
+        jaconb(2, 0) = -cry*srz; jaconb(2, 1) = -srz*srx*sry - crx*crz;   jaconb(2, 2) = -srz*crx*sry + srx*crz;
+        jaconb(2, 3) =  cry*crz; jaconb(2, 4) =  crz*srx*sry - crx*srz;   jaconb(2, 5) =  crz*crx*sry + srx*srz;
+        jaconb(2, 6) =  0;       jaconb(2, 7) =  0;                       jaconb(2, 8) =  0;
+
+        // jaconb for translation
+        transb(0, 0) = cry*crz; transb(0, 1) = crz*srx*sry - crx*srz;   transb(2, 2) = crz*crx*sry + srx*srz;
+        transb(1, 0) = cry*srz; transb(1, 1) = srz*srx*sry + crx*crz;   transb(2, 2) = srz*crx*sry - srx*crz;
+        transb(2, 0) = -sry;    transb(2, 1) = srx*cry;                 transb(2, 2) = crx*cry;
+
+
+        if (jacobians != NULL && jacobians[0] != NULL) {
+
+            jacobians[0][0] = (jaconb(0, 0)*p[0] + jaconb(0, 1)*p[1] + jaconb(0, 2)*p[2])*p_nor[0] +
+                              (jaconb(0, 3)*p[0] + jaconb(0, 4)*p[1] + jaconb(0, 5)*p[2])*p_nor[1] +
+                              (jaconb(0, 6)*p[0] + jaconb(0, 7)*p[1] + jaconb(0, 8)*p[2])*p_nor[2];
+            jacobians[0][1] = (jaconb(1, 0)*p[0] + jaconb(1, 1)*p[1] + jaconb(1, 2)*p[2])*p_nor[0] +
+                              (jaconb(1, 3)*p[0] + jaconb(1, 4)*p[1] + jaconb(1, 5)*p[2])*p_nor[1] +
+                              (jaconb(1, 6)*p[0] + jaconb(1, 7)*p[1] + jaconb(1, 8)*p[2])*p_nor[2];
+            jacobians[0][2] = (jaconb(2, 0)*p[0] + jaconb(2, 1)*p[1] + jaconb(2, 2)*p[2])*p_nor[0] +
+                              (jaconb(2, 3)*p[0] + jaconb(2, 4)*p[1] + jaconb(2, 5)*p[2])*p_nor[1] +
+                              (jaconb(2, 6)*p[0] + jaconb(2, 7)*p[1] + jaconb(2, 8)*p[2])*p_nor[2];
+
+            jacobians[0][3] = transb(0, 0) * p_nor[0] + transb(0, 1) * p_nor[1] + transb(0, 2) * p_nor[2];
+            jacobians[0][4] = transb(1, 0) * p_nor[0] + transb(1, 1) * p_nor[1] + transb(1, 2) * p_nor[2];
+            jacobians[0][5] = transb(2, 0) * p_nor[0] + transb(2, 1) * p_nor[1] + transb(2, 2) * p_nor[2];
+        }
+        return true;
+    }
+};
+
+struct PointToPlaneError
+{
+    const Eigen::Vector3d& p_dst;
+    const Eigen::Vector3d& p_src;
+    const Eigen::Vector3d& p_nor;
+
+    PointToPlaneError(const Eigen::Vector3d& dst, const Eigen::Vector3d& src, const Eigen::Vector3d& nor) :
+    p_dst(dst), p_src(src), p_nor(nor)
+    {
+    }
+
+    // Factory to hide the construction of the CostFunction object from the client code.
+
+    static ceres::CostFunction* Create(const Eigen::Vector3d& observed, const Eigen::Vector3d& worldPoint, const Eigen::Vector3d& normal)
+    {
+        return (new ceres::AutoDiffCostFunction<PointToPlaneError, 1, 6>(new PointToPlaneError(observed, worldPoint, normal)));
+    }
+
+    template <typename T>
+    bool operator()(const T * const camera, T* residuals) const
+    {
+
+        T p[3] = {T(p_src[0]), T(p_src[1]), T(p_src[2])};
+        ceres::AngleAxisRotatePoint(camera, p, p);
+
+        // camera[3,4,5] are the translation.
+        p[0] += camera[3];
+        p[1] += camera[4];
+        p[2] += camera[5];
+
+        // The error is the difference between the predicted and observed position.
+        residuals[0] = (p[0] - T(p_dst[0])) * T(p_nor[0]) + \
+                       (p[1] - T(p_dst[1])) * T(p_nor[1]) + \
+                       (p[2] - T(p_dst[2])) * T(p_nor[2]);
+
+//        std::cout <<"p0 is " << p[0] <<" p1 is " << p[1] << "p2 is " << p[2] << std::endl;
+        return true;
+    }
+};
+
+inline double Square(const PointT point)
+{
+    return (pow(point.x, 2) + pow(point.y, 2) + pow(point.z, 2));
+}
+
+inline double pointNorm(const PointT point)
+{
+    return sqrt(Square(point));
+}
+
+inline PointT pointAdd(const PointT &p1, const PointT &p2, double pa1, double pa2)
+{
+    PointT p_out;
+    p_out.x = p1.x * pa1 + p2.x * pa2;
+    p_out.y = p1.y * pa1 + p2.y * pa2;
+    p_out.z = p1.z * pa1 + p2.z * pa2;
+    return p_out;
+}
+
+inline PointT pointCross2(const PointT &p1, const PointT &p2)
+{
+    PointT cross;
+    cross.x = p1.y * p2.z - p1.z * p2.y;
+    cross.y = p1.z * p2.x - p1.x * p2.z;
+    cross.z = p1.x * p2.y - p1.y * p2.x;
+    return cross;
+}
+
+inline PointT pointCross3(PointT p1, PointT p2, PointT p3)
+{
+    return pointCross2(pointCross2(p1, p2), p3);
+}
+
+inline PointT transPoint(PointT pIn, Eigen::MatrixXd rot, Eigen::VectorXd trans)
+{
+    PointT pOut;
+    Eigen::VectorXd point(3);
+    point(0) = pIn.x; point(1) = pIn.y; point(2) = pIn.z;
+    point = rot*point + trans;
+    pOut.x = point(0); pOut.y = point(1); pOut.z = point(2);
+    return pOut;
+}
 
 template <typename T>
 ceres::MatrixAdapter<T, 1, 4> ColumnMajorAdapter4x3(T* pointer)
@@ -219,6 +386,35 @@ void laserCloudFullResHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloud
   std::vector<int> indices;
   pcl::removeNaNFromPointCloud(*laserCloudFullRes,*laserCloudFullRes, indices);
   newLaserCloudFullRes = true;
+}
+
+ceres::Solver::Options getOptions()
+{
+    ceres::Solver::Options options;
+//    options.update_state_every_iteration = true;
+    options.preconditioner_type = ceres::IDENTITY;
+    options.linear_solver_type  = ceres::DENSE_QR;
+    options.min_trust_region_radius            = 1e-5;
+    options.max_num_iterations                 = 3;
+    options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
+    return options;
+}
+
+ceres::Solver::Options getOptionsMedium()
+{
+    ceres::Solver::Options options;
+    std::cout << "linear algebra: " << options.sparse_linear_algebra_library_type << std::endl;
+    std::cout << "linear solver:  " << options.linear_solver_type << std::endl;
+
+    options.sparse_linear_algebra_library_type = ceres::SUITE_SPARSE;
+    options.linear_solver_type                 = ceres::SPARSE_NORMAL_CHOLESKY;
+    return options;
+}
+
+void solve(Problem &problem, bool smallProblem = true)
+{
+    ceres::Solver::Summary summary;
+    ceres::Solve(smallProblem ? getOptions() : getOptionsMedium(), &problem, &summary);
 }
 
 
@@ -332,10 +528,10 @@ int main(int argc, char** argv)
             // iteration for 25 times
             for (int iterCount = 0; iterCount < 25; iterCount++) {
 
+              ceres::Problem problem;
               laserCloudOri->clear();
               coeffSel->clear();
-
-
+              targetPoint->clear();
               //! Caculate the distance for Corner Sharp Points
               for (int i = 0; i < cornerPointsSharpNum; i++) {
                 TransformToStart(&cornerPointsSharp->points[i], &pointSel);
@@ -358,58 +554,34 @@ int main(int argc, char** argv)
                   tripod1 = laserCloudCornerLast->points[pointSearchCornerInd1[i]];
                   tripod2 = laserCloudCornerLast->points[pointSearchCornerInd2[i]];
 
-                  float x0 = pointSel.x;
-                  float y0 = pointSel.y;
-                  float z0 = pointSel.z;
-                  float x1 = tripod1.x;
-                  float y1 = tripod1.y;
-                  float z1 = tripod1.z;
-                  float x2 = tripod2.x;
-                  float y2 = tripod2.y;
-                  float z2 = tripod2.z;
+                  float a012 = pointNorm(pointCross2(pointAdd(pointSel, tripod1, 1, -1),
+                                                     pointAdd(pointSel, tripod2, 1, -1)));
 
-                  float a012 = sqrt(((x0 - x1)*(y0 - y2) - (x0 - x2)*(y0 - y1))
-                             * ((x0 - x1)*(y0 - y2) - (x0 - x2)*(y0 - y1))
-                             + ((x0 - x1)*(z0 - z2) - (x0 - x2)*(z0 - z1))
-                             * ((x0 - x1)*(z0 - z2) - (x0 - x2)*(z0 - z1))
-                             + ((y0 - y1)*(z0 - z2) - (y0 - y2)*(z0 - z1))
-                             * ((y0 - y1)*(z0 - z2) - (y0 - y2)*(z0 - z1)));
+                  float l12 = pointNorm(pointAdd(tripod1, tripod2, 1, -1));
 
-                  float l12 = sqrt((x1 - x2)*(x1 - x2) + (y1 - y2)*(y1 - y2) + (z1 - z2)*(z1 - z2));
-
-                  float la = ((y1 - y2)*((x0 - x1)*(y0 - y2) - (x0 - x2)*(y0 - y1))
-                           + (z1 - z2)*((x0 - x1)*(z0 - z2) - (x0 - x2)*(z0 - z1))) / a012 / l12;
-
-                  float lb = -((x1 - x2)*((x0 - x1)*(y0 - y2) - (x0 - x2)*(y0 - y1))
-                           - (z1 - z2)*((y0 - y1)*(z0 - z2) - (y0 - y2)*(z0 - z1))) / a012 / l12;
-
-                  float lc = -((x1 - x2)*((x0 - x1)*(z0 - z2) - (x0 - x2)*(z0 - z1))
-                           + (y1 - y2)*((y0 - y1)*(z0 - z2) - (y0 - y2)*(z0 - z1))) / a012 / l12;
+                  PointT p_n = pointCross3(pointAdd(tripod1, tripod2, 1, -1),
+                                           pointAdd(pointSel, tripod1, 1, -1),
+                                           pointAdd(pointSel, tripod2, 1, -1));
 
                   float ld2 = a012 / l12;
-
-                  pointProj = pointSel;
-                  pointProj.x -= la * ld2;
-                  pointProj.y -= lb * ld2;
-                  pointProj.z -= lc * ld2;
 
                   //!!!!!!!!!!!!!!!!!!! S is very important
                   float s = 1;
                   if (iterCount >= 5) {
                     s = 1 - 1.8 * fabs(ld2);
                   }
-
-//                  s = 1;
-                  coeff.x = s * la;
-                  coeff.y = s * lb;
-                  coeff.z = s * lc;
+                  coeff.x = s * p_n.x/a012/l12;
+                  coeff.y = s * p_n.y/a012/l12;
+                  coeff.z = s * p_n.z/a012/l12;
                   coeff.intensity = s * ld2;
 
                   if (s > 0.1 && ld2 != 0) {
                     laserCloudOri->push_back(cornerPointsSharp->points[i]);
                     coeffSel->push_back(coeff);
+                    targetPoint->push_back(tripod1);
                   }
                 }
+                //dd
               }
 
               int corner_points = coeffSel->size();
@@ -419,6 +591,33 @@ int main(int argc, char** argv)
                 continue;
               }
 
+              std::cout << "coeff size is " << laserCloudOri->points.size() << std::endl;
+              for (size_t pid = 0 ; pid < laserCloudOri->points.size(); pid++) {
+
+                  Eigen::Vector3d src, nor;
+                  src[0] = laserCloudOri->points[pid].x;
+                  src[1] = laserCloudOri->points[pid].y;
+                  src[2] = laserCloudOri->points[pid].z;
+
+                  nor[0] = coeffSel->points[pid].x;
+                  nor[1] = coeffSel->points[pid].y;
+                  nor[2] = coeffSel->points[pid].z;
+
+                  double res = coeffSel->points[pid].intensity;
+
+                  ceres::CostFunction* cost_function = new PointToPlaneCostFunction(src, nor, res);
+                  problem.AddResidualBlock(cost_function,
+                                           new ceres::HuberLoss(0.5),
+                                           transform);
+
+//                  ceres::CostFunction* cost_function = PointToPlaneError::Create(dst, src, nor);
+//                  problem.AddResidualBlock(cost_function,
+//                                           NULL,
+//                                           transform);
+
+              }
+
+              /*
               cv::Mat matA(pointSelNum, 6, CV_32F, cv::Scalar::all(0));
               cv::Mat matAt(6, pointSelNum, CV_32F, cv::Scalar::all(0));
               cv::Mat matAtA(6, 6, CV_32F, cv::Scalar::all(0));
@@ -487,6 +686,8 @@ int main(int argc, char** argv)
               matAtB = matAt * matB;
               cv::solve(matAtA, matAtB, matX, cv::DECOMP_QR);
 
+
+
               transform[0] += matX.at<float>(0, 0);
               transform[1] += matX.at<float>(1, 0);
               transform[2] += matX.at<float>(2, 0);
@@ -509,7 +710,11 @@ int main(int argc, char** argv)
 
               if (deltaR < 0.1 && deltaT < 0.1) {
                 break;
-              }
+              }*/
+
+
+
+
             }
           }
 
@@ -524,6 +729,12 @@ int main(int argc, char** argv)
               trans_sum.matrix() = trans_sum.matrix() * trans_tmp.matrix().inverse();
               isoToAngleAxis(trans_sum, transformSum);
 
+		  }
+
+		  
+
+		  // Step 3 output
+		  {
               geometry_msgs::Quaternion geoQuat = tf::createQuaternionMsgFromRollPitchYaw(transformSum[2],
                       -transformSum[0], -transformSum[1]);
 

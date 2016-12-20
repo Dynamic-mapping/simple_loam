@@ -15,7 +15,7 @@ find_package(PCL REQUIRED)
 find_package(OpenCV REQUIRED)
 FIND_PACKAGE(Ceres REQUIRED)
 INCLUDE_DIRECTORIES(${CERES_INCLUDE_DIRS})
-add_definitions(${Ceres_DEFINITIONS})
+
 include_directories(
   include
 	${catkin_INCLUDE_DIRS} 
