@@ -13,30 +13,34 @@ find_package(catkin REQUIRED COMPONENTS
 #find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
 find_package(OpenCV REQUIRED)
+find_package(Eigen3 REQUIRED)
 FIND_PACKAGE(Ceres REQUIRED)
 INCLUDE_DIRECTORIES(${CERES_INCLUDE_DIRS})
+FIND_PACKAGE(gflags REQUIRED)
+INCLUDE_DIRECTORIES(${GFLAGS_INCLUDE_DIRS})
+INCLUDE_DIRECTORIES(${CERES_INCLUDE_DIRS})
 add_definitions(${Ceres_DEFINITIONS})
+
+catkin_package(
+)
+
 include_directories(
   include
 	${catkin_INCLUDE_DIRS} 
-#	${EIGEN3_INCLUDE_DIR}
+	${EIGEN3_INCLUDE_DIR}
         ${CERES_LIBRARY_DIRS}
 	${PCL_INCLUDE_DIRS})
 
-catkin_package(
-  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs
-  DEPENDS EIGEN3 PCL OpenCV
-  INCLUDE_DIRS include
-)
 
 
 add_executable(scanRegistration src/scanRegistration.cpp)
 target_link_libraries(scanRegistration ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS})
 
-link_directories(${Ceres_LIBRARY_DIRS})
+link_directories(${PCL_LIBRARY_DIRS} ${CERES_LIBRARY_DIRS})
 add_executable(laserOdometry src/laserOdometry.cpp)
-#add_dependencies(loam_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS} ${PCL_DEFINITIONS})
-target_link_libraries(laserOdometry ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBS})
+add_dependencies(laserOdometry ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS} ${PCL_DEFINITIONS} ${Ceres_DEFINITIONS})
+target_link_libraries(laserOdometry ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS} ${Ceres_LIBS})
+
 
 add_executable(laserMapping src/laserMapping.cpp)
 target_link_libraries(laserMapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS})

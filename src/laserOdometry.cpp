@@ -58,13 +58,6 @@
 #include <Eigen/Dense>
 #include <Eigen/LU>
 
-using ceres::AutoDiffCostFunction;
-using ceres::CostFunction;
-using ceres::CauchyLoss;
-using ceres::Problem;
-using ceres::Solve;
-using ceres::Solver;
-
 const float scanPeriod = 0.1;
 
 const int skipFrameNum = 1;
@@ -411,7 +404,7 @@ ceres::Solver::Options getOptionsMedium()
     return options;
 }
 
-void solve(Problem &problem, bool smallProblem = true)
+void solve(ceres::Problem &problem, bool smallProblem = true)
 {
     ceres::Solver::Summary summary;
     ceres::Solve(smallProblem ? getOptions() : getOptionsMedium(), &problem, &summary);
@@ -528,7 +521,7 @@ int main(int argc, char** argv)
             // iteration for 25 times
             for (int iterCount = 0; iterCount < 25; iterCount++) {
 
-              ceres::Problem problem;
+
               laserCloudOri->clear();
               coeffSel->clear();
               targetPoint->clear();
@@ -592,6 +585,12 @@ int main(int argc, char** argv)
               }
 
               std::cout << "coeff size is " << laserCloudOri->points.size() << std::endl;
+              cv::Mat matA(pointSelNum, 6, CV_32F, cv::Scalar::all(0));
+              cv::Mat matAt(6, pointSelNum, CV_32F, cv::Scalar::all(0));
+              cv::Mat matAtA(6, 6, CV_32F, cv::Scalar::all(0));
+              cv::Mat matB(pointSelNum, 1, CV_32F, cv::Scalar::all(0));
+              cv::Mat matAtB(6, 1, CV_32F, cv::Scalar::all(0));
+              cv::Mat matX(6, 1, CV_32F, cv::Scalar::all(0));
               for (size_t pid = 0 ; pid < laserCloudOri->points.size(); pid++) {
 
                   Eigen::Vector3d src, nor;
@@ -603,12 +602,19 @@ int main(int argc, char** argv)
                   nor[1] = coeffSel->points[pid].y;
                   nor[2] = coeffSel->points[pid].z;
 
-                  double res = coeffSel->points[pid].intensity;
+                  matA.at<float>(i, 0) = arx;
+                  matA.at<float>(i, 1) = ary;
+                  matA.at<float>(i, 2) = arz;
+                  matA.at<float>(i, 3) = atx;
+                  matA.at<float>(i, 4) = aty;
+                  matA.at<float>(i, 5) = atz;
+                  matB.at<float>(i, 0) = -0.05 * coeffSel->points[pid].intensity;
 
-                  ceres::CostFunction* cost_function = new PointToPlaneCostFunction(src, nor, res);
-                  problem.AddResidualBlock(cost_function,
-                                           new ceres::HuberLoss(0.5),
-                                           transform);
+//                  ceres::Problem problem;
+//                  ceres::CostFunction* cost_function = new PointToPlaneCostFunction(src, nor, res);
+//                  problem.AddResidualBlock(cost_function,
+//                                           new ceres::HuberLoss(0.5),
+//                                           transform);
 
 //                  ceres::CostFunction* cost_function = PointToPlaneError::Create(dst, src, nor);
 //                  problem.AddResidualBlock(cost_function,
@@ -681,6 +687,10 @@ int main(int argc, char** argv)
                 matA.at<float>(i, 5) = atz;
                 matB.at<float>(i, 0) = -0.05 * d2;
               }
+
+              */
+
+
               cv::transpose(matA, matAt);
               matAtA = matAt * matA;
               matAtB = matAt * matB;
@@ -710,11 +720,7 @@ int main(int argc, char** argv)
 
               if (deltaR < 0.1 && deltaT < 0.1) {
                 break;
-              }*/
-
-
-
-
+              }
             }
           }
 
