@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(loam_velodyne)
+project(simple_loam)
 
 find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
@@ -33,39 +33,18 @@ include_directories(
 
 
 
-add_executable(scanRegistration src/scanRegistration.cpp)
-target_link_libraries(scanRegistration ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS})
+add_executable(simple_scanRegistration src/scanRegistration.cpp)
+target_link_libraries(simple_scanRegistration ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS})
 
 link_directories(${PCL_LIBRARY_DIRS} ${CERES_LIBRARY_DIRS})
-add_executable(laserOdometry src/laserOdometry.cpp)
-add_dependencies(laserOdometry ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS} ${PCL_DEFINITIONS} ${Ceres_DEFINITIONS})
-target_link_libraries(laserOdometry ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS} ${Ceres_LIBS})
+add_executable(simple_laserOdometry src/laserOdometry.cpp)
+add_dependencies(simple_laserOdometry ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS} ${PCL_DEFINITIONS} ${Ceres_DEFINITIONS})
+target_link_libraries(simple_laserOdometry ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS} ${Ceres_LIBS})
 
 
-add_executable(laserMapping src/laserMapping.cpp)
-target_link_libraries(laserMapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS})
+add_executable(simple_laserMapping src/laserMapping.cpp)
+target_link_libraries(simple_laserMapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS})
 
-add_executable(transformMaintenance src/transformMaintenance.cpp)
-target_link_libraries(transformMaintenance ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS})
-
-if (CATKIN_ENABLE_TESTING)
-  find_package(rostest REQUIRED)
-  # TODO: Download test data
-  catkin_download_test_data(${PROJECT_NAME}_test_data.tar.gz
-    https://dl.dropboxusercontent.com/s/y4hn486461tfmpm/velodyne_loam_test_data.tar.gz
-    MD5 3d5194e6981975588b7a93caebf79ba4)
-  add_custom_target(${PROJECT_NAME}_test_data
-    COMMAND ${CMAKE_COMMAND} -E tar -xzf velodyne_loam_test_data.tar.gz
-    DEPENDS ${PROJECT_NAME}_test_data.tar.gz)
-  configure_file(tests/loam.test.in
-                 ${PROJECT_BINARY_DIR}/test/loam.test)
-  add_rostest(${PROJECT_BINARY_DIR}/test/loam.test
-    DEPENDENCIES
-      ${PROJECT_NAME}_test_data
-      scanRegistration
-      laserOdometry
-      laserMapping
-      transformMaintenance)
-endif()
-
+add_executable(simple_transformMaintenance src/transformMaintenance.cpp)
+target_link_libraries(simple_transformMaintenance ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS})
 

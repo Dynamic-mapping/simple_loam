@@ -381,35 +381,6 @@ void laserCloudFullResHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloud
   newLaserCloudFullRes = true;
 }
 
-ceres::Solver::Options getOptions()
-{
-    ceres::Solver::Options options;
-//    options.update_state_every_iteration = true;
-    options.preconditioner_type = ceres::IDENTITY;
-    options.linear_solver_type  = ceres::DENSE_QR;
-    options.min_trust_region_radius            = 1e-5;
-    options.max_num_iterations                 = 3;
-    options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
-    return options;
-}
-
-ceres::Solver::Options getOptionsMedium()
-{
-    ceres::Solver::Options options;
-    std::cout << "linear algebra: " << options.sparse_linear_algebra_library_type << std::endl;
-    std::cout << "linear solver:  " << options.linear_solver_type << std::endl;
-
-    options.sparse_linear_algebra_library_type = ceres::SUITE_SPARSE;
-    options.linear_solver_type                 = ceres::SPARSE_NORMAL_CHOLESKY;
-    return options;
-}
-
-void solve(ceres::Problem &problem, bool smallProblem = true)
-{
-    ceres::Solver::Summary summary;
-    ceres::Solve(smallProblem ? getOptions() : getOptionsMedium(), &problem, &summary);
-}
-
 
 int main(int argc, char** argv)
 {
@@ -497,9 +468,6 @@ int main(int argc, char** argv)
             laserCloudSurfLast2.header.frame_id = "/camera";
             pubLaserCloudSurfLast.publish(laserCloudSurfLast2);
     
-            transformSum[0] += imuPitchStart;
-            transformSum[2] += imuRollStart;
-    
             systemInited = true;
             continue;
           }
@@ -512,6 +480,14 @@ int main(int argc, char** argv)
 
 
 
+
+
+
+
+
+
+
+//          transform[0] = transform[1] = transform[2] = transform[3] = transform[4] = transform[5] = 0;
           // Step 1 Caculate the transformation based on the LK gredicent method.
           if (laserCloudCornerLastNum > 10 && laserCloudSurfLastNum > 100) {
             std::vector<int> indices;
@@ -522,59 +498,54 @@ int main(int argc, char** argv)
             for (int iterCount = 0; iterCount < 25; iterCount++) {
 
 
+              std::cout << "loop " << iterCount << " transform is "
+                                           << transform[0] << " " <<
+                                              transform[1] << " " <<
+                                              transform[2] << " " <<
+                                              transform[3] << " " <<
+                                              transform[4] << " " <<
+                                              transform[5] << " " << std::endl;
               laserCloudOri->clear();
               coeffSel->clear();
               targetPoint->clear();
               //! Caculate the distance for Corner Sharp Points
               for (int i = 0; i < cornerPointsSharpNum; i++) {
                 TransformToStart(&cornerPointsSharp->points[i], &pointSel);
-                if (iterCount % 5 == 0) {
 
-                  std::vector<int> indices;
-                  pcl::removeNaNFromPointCloud(*laserCloudCornerLast,*laserCloudCornerLast, indices);
-                  kdtreeCornerLast->nearestKSearch(pointSel, 2, pointSearchInd, pointSearchSqDis);
-                  int closestPointInd = -1, minPointInd2 = -1;
-                  if (pointSearchSqDis[0] < 25) {
-                    closestPointInd = pointSearchInd[0];
-                    minPointInd2    = pointSearchInd[1];
-                  }
+                std::vector<int> searchInd;
+                std::vector<float> searchDis;
+                kdtreeCornerLast->nearestKSearch(pointSel, 2, searchInd, searchDis);
+                if (searchDis[0] > 25) continue;
 
-                  pointSearchCornerInd1[i] = closestPointInd;
-                  pointSearchCornerInd2[i] = minPointInd2;
+                tripod1 = laserCloudCornerLast->points[searchInd[0]];
+                tripod2 = laserCloudCornerLast->points[searchInd[1]];
+
+                float a012 = pointNorm(pointCross2(pointAdd(pointSel, tripod1, 1, -1),
+                                                   pointAdd(pointSel, tripod2, 1, -1)));
+
+                float l12 = pointNorm(pointAdd(tripod1, tripod2, 1, -1));
+
+                PointT p_n = pointCross3(pointAdd(tripod1, tripod2, 1, -1),
+                                         pointAdd(pointSel, tripod1, 1, -1),
+                                         pointAdd(pointSel, tripod2, 1, -1));
+
+                float ld2 = a012 / l12;
+
+                //!!!!!!!!!!!!!!!!!!! S is very important
+                float s = 1;
+                if (iterCount >= 5) {
+                  s = 1 - 1.8 * fabs(ld2);
                 }
+                coeff.x = s * p_n.x/a012/l12;
+                coeff.y = s * p_n.y/a012/l12;
+                coeff.z = s * p_n.z/a012/l12;
+                coeff.intensity = s * ld2;
 
-                if (pointSearchCornerInd2[i] >= 0) {
-                  tripod1 = laserCloudCornerLast->points[pointSearchCornerInd1[i]];
-                  tripod2 = laserCloudCornerLast->points[pointSearchCornerInd2[i]];
-
-                  float a012 = pointNorm(pointCross2(pointAdd(pointSel, tripod1, 1, -1),
-                                                     pointAdd(pointSel, tripod2, 1, -1)));
-
-                  float l12 = pointNorm(pointAdd(tripod1, tripod2, 1, -1));
-
-                  PointT p_n = pointCross3(pointAdd(tripod1, tripod2, 1, -1),
-                                           pointAdd(pointSel, tripod1, 1, -1),
-                                           pointAdd(pointSel, tripod2, 1, -1));
-
-                  float ld2 = a012 / l12;
-
-                  //!!!!!!!!!!!!!!!!!!! S is very important
-                  float s = 1;
-                  if (iterCount >= 5) {
-                    s = 1 - 1.8 * fabs(ld2);
-                  }
-                  coeff.x = s * p_n.x/a012/l12;
-                  coeff.y = s * p_n.y/a012/l12;
-                  coeff.z = s * p_n.z/a012/l12;
-                  coeff.intensity = s * ld2;
-
-                  if (s > 0.1 && ld2 != 0) {
-                    laserCloudOri->push_back(cornerPointsSharp->points[i]);
-                    coeffSel->push_back(coeff);
-                    targetPoint->push_back(tripod1);
-                  }
+                if (s > 0.1 && ld2 != 0) {
+                  laserCloudOri->push_back(cornerPointsSharp->points[i]);
+                  coeffSel->push_back(coeff);
+                  targetPoint->push_back(tripod1);
                 }
-                //dd
               }
 
               int corner_points = coeffSel->size();
@@ -585,45 +556,6 @@ int main(int argc, char** argv)
               }
 
               std::cout << "coeff size is " << laserCloudOri->points.size() << std::endl;
-              cv::Mat matA(pointSelNum, 6, CV_32F, cv::Scalar::all(0));
-              cv::Mat matAt(6, pointSelNum, CV_32F, cv::Scalar::all(0));
-              cv::Mat matAtA(6, 6, CV_32F, cv::Scalar::all(0));
-              cv::Mat matB(pointSelNum, 1, CV_32F, cv::Scalar::all(0));
-              cv::Mat matAtB(6, 1, CV_32F, cv::Scalar::all(0));
-              cv::Mat matX(6, 1, CV_32F, cv::Scalar::all(0));
-              for (size_t pid = 0 ; pid < laserCloudOri->points.size(); pid++) {
-
-                  Eigen::Vector3d src, nor;
-                  src[0] = laserCloudOri->points[pid].x;
-                  src[1] = laserCloudOri->points[pid].y;
-                  src[2] = laserCloudOri->points[pid].z;
-
-                  nor[0] = coeffSel->points[pid].x;
-                  nor[1] = coeffSel->points[pid].y;
-                  nor[2] = coeffSel->points[pid].z;
-
-                  matA.at<float>(i, 0) = arx;
-                  matA.at<float>(i, 1) = ary;
-                  matA.at<float>(i, 2) = arz;
-                  matA.at<float>(i, 3) = atx;
-                  matA.at<float>(i, 4) = aty;
-                  matA.at<float>(i, 5) = atz;
-                  matB.at<float>(i, 0) = -0.05 * coeffSel->points[pid].intensity;
-
-//                  ceres::Problem problem;
-//                  ceres::CostFunction* cost_function = new PointToPlaneCostFunction(src, nor, res);
-//                  problem.AddResidualBlock(cost_function,
-//                                           new ceres::HuberLoss(0.5),
-//                                           transform);
-
-//                  ceres::CostFunction* cost_function = PointToPlaneError::Create(dst, src, nor);
-//                  problem.AddResidualBlock(cost_function,
-//                                           NULL,
-//                                           transform);
-
-              }
-
-              /*
               cv::Mat matA(pointSelNum, 6, CV_32F, cv::Scalar::all(0));
               cv::Mat matAt(6, pointSelNum, CV_32F, cv::Scalar::all(0));
               cv::Mat matAtA(6, 6, CV_32F, cv::Scalar::all(0));
@@ -688,8 +620,6 @@ int main(int argc, char** argv)
                 matB.at<float>(i, 0) = -0.05 * d2;
               }
 
-              */
-
 
               cv::transpose(matA, matAt);
               matAtA = matAt * matA;
@@ -723,6 +653,18 @@ int main(int argc, char** argv)
               }
             }
           }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
           // Step 2 based on the Estimated Translation, transforma the Surf and Edge Pointcloud, also publish the tf

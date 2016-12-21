@@ -33,6 +33,7 @@
   <run_depend>rospy</run_depend>
   <run_depend>std_msgs</run_depend>
   <run_depend>tf</run_depend>
+  <run_depend>ceres</run_depend>
 
   <test_depend>rostest</test_depend>
   <test_depend>rosbag</test_depend>
